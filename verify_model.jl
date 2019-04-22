@@ -4,8 +4,10 @@ using Memento
 using JSON
 using MAT
 
-config_array = JSON.parsefile("processed_models/weights_200_0.58__config.json")
-weights_dict = "processed_models/weights_200_0.58__weights.mat" |> matread
+path = "processed_models/cifar10_SmallCNN_rs_0.001_l1_2e-06_with_l1_weighting_lr_reduce_0.008/Apr21_11-33-10/epoch_138_acc_0.492"
+
+config_array = JSON.parsefile(path * "__config.json")
+weights_dict = path * "__weights.mat" |> matread
 
 layers = Layer[]
 inputs = Dict{Int, Array{Int, 1}}()
@@ -54,6 +56,9 @@ for (i, layer) in enumerate(config_array)
         layer_id = "MaskedRelu_$(i-1)"
         push!(layers, MaskedReLU(weights_dict["$layer_id/mask"],
                                  interval_arithmetic))
+    elseif layer_type == "MaxPool"
+        pool_size = layer["pool_size"]
+        push!(layers, MaxPool((1, pool_size[1], pool_size[2], 1)))
     elseif layer_type == "Normalization"
         layer_id = "Normalization_$(i-1)"
         push!(layers, Normalize(weights_dict["$layer_id/mean"],
@@ -67,9 +72,40 @@ for (i, layer) in enumerate(config_array)
     end
 end
 
-net = Graph(layers, inputs, "Graph network")
+
+start_index = 1
+end_index = 5000
+dataset = "validation"
+eps = 2 / 255
+adv_pred_opt = MIPVerify.None()
+
+net = Graph(layers, inputs, path)
 println(net)
 
-cifar10 = read_datasets("CIFAR10", 45000, 5000)
-f = frac_correct(net, cifar10.train, 1)
+cifar10 = dataset == "validation" ?
+    read_datasets("CIFAR10", 45001, 5000).train :
+    read_datasets("CIFAR10").test
+
+f = frac_correct(net, cifar10, 50)
 println("Fraction correct: $(f)")
+
+target_indexes = start_index:end_index
+
+MIPVerify.setloglevel!("info")
+
+MIPVerify.batch_find_untargeted_attack(
+    net,
+    cifar10,
+    target_indexes,
+    10,
+    adv_pred_opt,
+    GurobiSolver(Gurobi.Env(), BestObjStop=eps, TimeLimit=300),
+    save_path="./verification/results_$(dataset)/",
+    norm_order=Inf,
+    tightening_algorithm=lp,
+    rebuild=false,
+    cache_model=false,
+    tightening_solver=GurobiSolver(Gurobi.Env(), TimeLimit=10, OutputFlag=0),
+    pp = MIPVerify.LInfNormBoundedPerturbationFamily(eps),
+    solve_rerun_option = MIPVerify.resolve_ambiguous_cases
+)
