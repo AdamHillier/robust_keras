@@ -19,7 +19,7 @@ class AdversarialExampleGenerator(Sequence):
         self.batch_size = batch_size
         self.shuffle = shuffle
 
-        self.epoch = 0
+        self.epoch = -1 # Will get incremented to zero in first call to __getitem__
         self.incremental = incremental
 
         self.x, self.y, self.sample_weights = \
@@ -83,10 +83,12 @@ class AdversarialExampleGenerator(Sequence):
         return x_batch_adv, y_batch, sample_weights_batch
 
 class LinfPGDAttack:
-    def __init__(self, model, epsilon, k, a, random_start, incremental = False, starting_epsilon = 0.001):
+    def __init__(self, model, epsilon, k, a, random_start, incremental=False, starting_epsilon=0.01):
         """Attack parameter initialization. The attack performs k steps of
            size a, while always staying within epsilon from the initial
            point."""
+        # To allow for small epsilons
+        starting_epsilon = min(epsilon / 10, starting_epsilon)
         self.model = model
         self.epsilon = epsilon
         self.k = k
