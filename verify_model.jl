@@ -4,7 +4,7 @@ using Memento
 using JSON
 using MAT
 
-path = "processed_models/cifar10_SmallCNN_rs_0.001_l1_2e-06_with_l1_weighting_lr_reduce_0.008/Apr21_11-33-10/epoch_138_acc_0.492"
+path = "processed_models/MNIST_SmallCNN_eps_0.100/Apr24_16-19-34/weights_100_0.96"
 
 config_array = JSON.parsefile(path * "__config.json")
 weights_dict = path * "__weights.mat" |> matread
@@ -86,7 +86,11 @@ cifar10 = dataset == "validation" ?
     read_datasets("CIFAR10", 45001, 5000).train :
     read_datasets("CIFAR10").test
 
-f = frac_correct(net, cifar10, 50)
+mnist = dataset == "validation" ?
+    read_datasets("MNIST", 55001, 5000).train :
+    read_datasets("MNIST").test
+
+f = frac_correct(net, mnist, 250)
 println("Fraction correct: $(f)")
 
 target_indexes = start_index:end_index
@@ -95,7 +99,7 @@ MIPVerify.setloglevel!("info")
 
 MIPVerify.batch_find_untargeted_attack(
     net,
-    cifar10,
+    mnist,
     target_indexes,
     10,
     adv_pred_opt,

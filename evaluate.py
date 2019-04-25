@@ -1,10 +1,9 @@
-import tensorflow as tf
 import numpy as np
 
+import keras.backend as K
 from keras.models import load_model
 from keras.losses import sparse_categorical_crossentropy
 from keras.datasets import cifar10, mnist
-from keras.backend.tensorflow_backend import set_session
 
 from pgd_attack import AdversarialExampleGenerator
 
@@ -19,6 +18,7 @@ def evaluate(model, dataset, section, adv=None, validation_size=5000,
     elif dataset == "MNIST":
         (x_train, y_train), (x_test, y_test) = mnist.load_data()
         x_train = np.expand_dims(x_train, axis=-1)
+        x_test = np.expand_dims(x_test, axis=-1)
     else:
         raise ValueError("Unrecognised dataset")
 
@@ -72,11 +72,34 @@ if __name__ == "__main__":
 
     parser.add_argument("--validation_size", type=int, default=5000)
 
+    parser.add_argument("--set_gpu", type=int)
+
     config = parser.parse_args()
 
-    model = load_model(config.model_path)
+    # Restrict GPU memory usage
+    if config.set_gpu is not None:
+        import tensorflow as tf
+        from keras.backend.tensorflow_backend import set_session
+        conf = tf.ConfigProto()
+        conf.gpu_options.allow_growth = True
+        conf.gpu_options.visible_device_list = str(config.set_gpu)
+        sess = tf.Session(config=conf)
+        set_session(sess)
 
-    evaluate(model, config.dataset, config.section, adv=config.adversary,
-             validation_size=config.validation_size,
-             adv_iterations=config.adversary_iterations,
-             adv_restarts=config.adversary_restarts)
+    # Some models had custom objects, which aren't needed now but the model
+    # won't load unless something is there.
+    def empty_func(*args):
+        return K.zeros(1)
+    custom_objects = {
+        "rs_loss": empty_func,
+        "rs_loss_metric": empty_func,
+        "num_unstable": empty_func,
+        "num_unstable_metric": empty_func
+    }
+    model = load_model(str(config.model_path), custom_objects)
+
+    acc = evaluate(model, config.dataset, config.section, adv=config.adversary,
+                   validation_size=config.validation_size,
+                   adv_iterations=config.adversary_iterations,
+                   adv_restarts=config.adversary_restarts)
+    print("Accuracy:", acc)

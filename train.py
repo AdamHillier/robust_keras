@@ -1,12 +1,10 @@
+import numpy as np
+
 from keras.optimizers import Adam
 from keras.losses import sparse_categorical_crossentropy
 from keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, \
                             TensorBoard
 from keras.datasets import cifar10, mnist
-from keras.backend.tensorflow_backend import set_session
-
-import tensorflow as tf
-import numpy as np
 
 from models import SmallCNN, LargeCNN, ResNet, relu_stability_naive, relu_stability_improved
 from pgd_attack import AdversarialExampleGenerator
@@ -51,7 +49,7 @@ parser.add_argument("--pgd_iter_train", type=int, default=8)
 parser.add_argument("--pgd_iter_eval", type=int, default=30)
 parser.add_argument("--epsilon_incremental", type=int, default=50)
 parser.add_argument("--validation_size", type=int, default=5000)
-parser.add_argument("--set_gpu", type=int, default=-1)
+parser.add_argument("--set_gpu", type=int)
 
 # Callbacks
 add_bool_arg(parser, "early_stop")
@@ -93,7 +91,10 @@ x_valid = x_valid.astype("float32") / 255
 ####################
 
 # Restrict GPU memory usage
-if config.set_gpu >= 0:
+print(config.set_gpu)
+if config.set_gpu is not None:
+    import tensorflow as tf
+    from keras.backend.tensorflow_backend import set_session
     conf = tf.ConfigProto()
     conf.gpu_options.allow_growth = True
     conf.gpu_options.visible_device_list = str(config.set_gpu)
