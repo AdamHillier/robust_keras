@@ -74,7 +74,7 @@ class AdversarialExampleGenerator(Sequence):
                             'pass shuffle="batch".')
 
         if self.incremental != False and self.incremental[0] <= self.epoch:
-            x_batch_adv = self.attack.perturb(x_batch, y_batch, max((self.epoch - self.incremental[0]) / (self.incremental[1] - self.incremental[0]), 1))
+            x_batch_adv = self.attack.perturb(x_batch, y_batch, min((self.epoch - self.incremental[0]) / (self.incremental[1] - self.incremental[0]), 1))
         elif self.incremental == False or self.incremental[1] <= self.epoch:
             x_batch_adv = self.attack.perturb(x_batch, y_batch, 1)
         else:
