@@ -1,9 +1,7 @@
 import numpy as np
 
-from keras.layers import Softmax
 import keras.backend as K
 from keras.optimizers import Adam
-from keras.losses import categorical_crossentropy
 from keras.preprocessing.image import ImageDataGenerator
 from keras.utils import to_categorical
 from keras.callbacks import EarlyStopping, LearningRateScheduler, ModelCheckpoint, \
@@ -14,7 +12,7 @@ import tensorflow as tf
 from keras.backend.tensorflow_backend import set_session
 
 from models_ibp import SmallCNN, MediumCNN, LargeCNN, ScheduleHyperParamCallback, \
-                       ConstantSchedule, InterpolateSchedule
+                       ConstantSchedule, InterpolateSchedule, ibp_loss
 
 import math
 import argparse
@@ -42,6 +40,7 @@ parser.add_argument("train_epsilon", type=float)
 # Model config
 parser.add_argument("--num_classes", type=int, default=10)
 parser.add_argument("--load_weights_from", type=Path)
+add_bool_arg(parser, "elide_final_layer", default=False)
 
 # Training
 add_bool_arg(parser, "augmentation", default=False)
@@ -108,44 +107,26 @@ k_train_var = K.variable(1)
 k = K.in_train_phase(K.stop_gradient(k_train_var), K.constant(config.min_k))
 
 if config.model_name == "SmallCNN":
-    model, lb, ub = SmallCNN(input_shape=input_shape, eps=eps)
+    model = SmallCNN(input_shape=input_shape)
 elif config.model_name == "MediumCNN":
-    model, lb, ub = MediumCNN(input_shape=input_shape, eps=eps)
+    model = MediumCNN(input_shape=input_shape)
 elif config.model_name == "LargeCNN":
-    model, lb, ub = LargeCNN(input_shape=input_shape, eps=eps)
+    model = LargeCNN(input_shape=input_shape)
 else:
     raise ValueError("Unrecognised model")
 
-def ibp_loss(y_true, y_pred):
-    # The labels are in one-hot format, so this multiply gives a tensor of zeros
-    # except for the lb of the correct logit; we can just sum
-    correct_logit = K.sum(tf.math.multiply(lb, y_true), axis=1)
-    # The bound at the wrong logits, zero at the correct logit
-    adv_logits = tf.math.multiply(ub, 1 - y_true) - K.expand_dims(correct_logit) + tf.math.multiply(lb, y_true)
-    adv_pred = Softmax(axis=1)(adv_logits)
-
-    return k * categorical_crossentropy(y_true, y_pred) + \
-        (1 - k) * categorical_crossentropy(y_true, adv_pred)
+def loss(y_true, y_pred):
+    return ibp_loss(y_true, y_pred, model, eps, k)
 
 def robust_acc(y_true, y_pred):
-    # The labels are in one-hot format, so this multiply gives a tensor of zeros
-    # except for the lb of the correct logit; we can just sum
-    correct_lb = K.sum(tf.math.multiply(lb, y_true), axis=1)
-    # Multiplying `ub` by `1 - y_true` gives a tensor with zero at the true
-    # logit and the upper bound elsewhere. Adding the mean of the upper bound
-    # multiplied by the one-hot `y_true` gives the same tensor but with the mean
-    # of the upper bounds at the true logit; this ensures that the true logit
-    # isn't the max and so we really do get the maximum upper bound of the
-    # incorrect logits.
-    max_incorrect_ub = K.max(tf.math.multiply(ub, 1 - y_true) + K.mean(ub, axis=1, keepdims=True) * y_true, axis=1)
-    return K.mean(K.greater(correct_lb, max_incorrect_ub), axis=0)
+    return model.robust_accuracy
 
 if config.load_weights_from is not None:
     model.load_weights(config.load_weights_from)
 
 metrics = ["accuracy", robust_acc]
 
-model.compile(loss=ibp_loss, optimizer=Adam(lr=config.lr), metrics=metrics)
+model.compile(loss=loss, optimizer=Adam(lr=config.lr), metrics=metrics)
 
 model.summary()
 
@@ -155,7 +136,8 @@ model.summary()
 
 # Prepare model model saving directory
 model_type = config.model_name
-model_name = "IBP_%s_%s_train_%.3f_eval_%.3f" % (config.dataset, model_type, config.train_epsilon, config.eval_epsilon)
+elision = "elide" if config.elide_final_layer else "no_elide"
+model_name = "IBP_%s_%s_train_%.3f_eval_%.3f_%s" % (config.dataset, model_type, config.train_epsilon, config.eval_epsilon, elision)
 if not config.load_weights_from:
     save_dir = Path("saved_models") / model_name / datetime.now().strftime("%b%d_%H-%M-%S")
     if not save_dir.exists():
@@ -178,7 +160,7 @@ tensor_board = TensorBoard(log_dir=save_dir,
                            write_graph=True,
                            write_grads=False,
                            write_images=False,
-                           update_freq=2500)
+                           update_freq=5000)
 tensor_board.samples_seen = config.initial_epoch * len(x_train)
 tensor_board.samples_seen_at_last_write = config.initial_epoch * len(x_train)
 
@@ -195,39 +177,39 @@ if config.lr_schedule is not None:
             else:
                 break
         return lr
-    callbacks.append(LearningRateScheduler(scheduler, verbose=1))
+    callbacks.insert(0, LearningRateScheduler(scheduler, verbose=1))
 
 if config.lr_reduce:
-    callbacks.append(ReduceLROnPlateau(monitor="val_loss",
-                                       factor=config.lr_reduce_factor,
-                                       cooldown=0,
-                                       patience=config.lr_reduce_patience,
-                                       min_lr=config.lr_reduce_min,
-                                       verbose=1))
+    callbacks.insert(0, ReduceLROnPlateau(monitor="val_loss",
+                                          factor=config.lr_reduce_factor,
+                                          cooldown=0,
+                                          patience=config.lr_reduce_patience,
+                                          min_lr=config.lr_reduce_min,
+                                          verbose=1))
 if config.early_stop:
-    callbacks.append(EarlyStopping(monitor="val_loss",
-                                   patience=config.early_stop_patience,
-                                   verbose=1))
+    callbacks.insert(0, EarlyStopping(monitor="val_loss",
+                                      patience=config.early_stop_patience,
+                                      verbose=1))
 
 if config.epsilon_rampup > 0:
     start = config.epsilon_warmup * len(x_train)
     end = start + config.epsilon_rampup * len(x_train)
     eps_schedule = InterpolateSchedule(0, config.train_epsilon, start, end)
-    callbacks.append(ScheduleHyperParamCallback(name="epsilon",
-                                                variable=eps_train_var,
-                                                schedule=eps_schedule,
-                                                update_every=1000,
-                                                verbose=0))
+    callbacks.insert(0, ScheduleHyperParamCallback(name="epsilon",
+                                                   variable=eps_train_var,
+                                                   schedule=eps_schedule,
+                                                   update_every=1000,
+                                                   verbose=0))
 
 if config.k_rampup > 0:
     start = config.k_warmup * len(x_train)
     end = start + config.k_rampup * len(x_train)
     k_schedule = InterpolateSchedule(1, config.min_k, start, end)
-    callbacks.append(ScheduleHyperParamCallback(name="k",
-                                                variable=k_train_var,
-                                                schedule=k_schedule,
-                                                update_every=1000,
-                                                verbose=0))
+    callbacks.insert(0, ScheduleHyperParamCallback(name="k",
+                                                   variable=k_train_var,
+                                                   schedule=k_schedule,
+                                                   update_every=1000,
+                                                   verbose=0))
 
 # Run training, with or without data augmentation.
 if not config.augmentation:
@@ -242,50 +224,16 @@ else:
     print('Using real-time data augmentation.')
     # This will do preprocessing and realtime data augmentation:
     datagen = ImageDataGenerator(
-        # set input mean to 0 over the dataset
-        featurewise_center=False,
-        # set each sample mean to 0
-        samplewise_center=False,
-        # divide inputs by std of dataset
-        featurewise_std_normalization=False,
-        # divide each input by its std
-        samplewise_std_normalization=False,
-        # apply ZCA whitening
-        zca_whitening=False,
-        # epsilon for ZCA whitening
-        zca_epsilon=1e-06,
-        # randomly rotate images in the range (deg 0 to 180)
+        # randomly rotate images in the range (deg 0 to 30)
         rotation_range=30,
         # randomly shift images horizontally
         width_shift_range=0.1,
         # randomly shift images vertically
         height_shift_range=0.1,
-        # set range for random shear
-        shear_range=0.,
-        # set range for random zoom
-        zoom_range=0.,
-        # set range for random channel shifts
-        channel_shift_range=0.,
         # set mode for filling points outside the input boundaries
         fill_mode="nearest",
-        # value used for fill_mode = "constant"
-        cval=0.,
         # randomly flip images
-        horizontal_flip=True,
-        # randomly flip images
-        vertical_flip=False,
-        # set rescaling factor (applied before any other transformation)
-        rescale=None,
-        # set function that will be applied on each input
-        preprocessing_function=None,
-        # image data format, either "channels_first" or "channels_last"
-        data_format=None,
-        # fraction of images reserved for validation (strictly between 0 and 1)
-        validation_split=0.0)
-
-    # Compute quantities required for featurewise normalization
-    # (std, mean, and principal components if ZCA whitening is applied).
-    datagen.fit(x_train)
+        horizontal_flip=True)
 
     # Fit the model on the batches generated by datagen.flow().
     model.fit_generator(datagen.flow(x_train, y_train, batch_size=config.batch_size),

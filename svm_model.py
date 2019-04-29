@@ -22,7 +22,7 @@ class SVMModel():
         y_predict = self.predict(X)
         class_distances = self.get_predicted_class_decision_boundary_distances(X, y_predict)
         y_predict_is_adv = np.fromiter(map(adv_prediction_function, class_distances), dtype=np.bool)
-        
+
         for i, x in enumerate(y_predict_is_adv):
             if x:
                 y_predict[i] = -1
@@ -57,27 +57,27 @@ class SVMModel():
     def test(self, X_test, y_test):
         """Calculates the accuracy of the model on some test data, without
            adversarial prediction."""
-        
+
         return self.svm.score(self.scaler.transform(X_test), y_test)
 
     def test_with_adversarial_prediction(self, X_test, y_test, is_adversarial, adv_prediction_function):
         """Calculates the accuracy of the model on some test data when using
            adversarial prediction. Takes a boolean flag indicating if the test
            data is adversarial or not, and an adversarial prediction function"""
-        
+
         y_predict = self.predict_with_adversarial_prediction(X_test, adv_prediction_function)
         
         # Number of inputs with correct class predicted
         num_correct = np.sum(y_predict == y_test)
-        
+
         if is_adversarial:
             # If the examples are adversarial it's also correct to predict the
             # class -1 (which indicates adversarialness)
             num_correct += np.sum(y_predict == -1)
-                        
+
         return num_correct / len(X_test)
-    
-    def distances_linear_map(self, X):
+
+    def distances_linear_map(self):
         start = 0
         end = 0
         class_support_vect = []
@@ -91,7 +91,7 @@ class SVMModel():
 
         dists = np.zeros((45,100))
         k = 0
-        for i in range(10):        
+        for i in range(10):
             for j in range(i+1, 10):
                 dists[k] += np.sum(class_dual_coef[i][j-1].reshape(1,-1).T * class_support_vect[i], axis=0)
                 dists[k] += np.sum(class_dual_coef[j][i].reshape(1,-1).T * class_support_vect[j], axis=0)

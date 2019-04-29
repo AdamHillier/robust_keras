@@ -10,25 +10,94 @@ import tensorflow as tf
 
 import math
 
-def IBP_CNN(input_shape, layers, eps):
-    inputs = Input(shape=input_shape)
+def _build_indices(label, _num_classes=10):
+    indices = []
+    for i in range(_num_classes):
+        indices.append(list(range(i)) + list(range(i + 1, _num_classes)))
+    _js = tf.constant(indices, dtype=tf.int32)
 
-    x = inputs
+    batch_size = tf.shape(label)[0]
+    i = tf.range(batch_size, dtype=tf.int32)
+    correct_idx = tf.stack([i, tf.cast(label, tf.int32)], axis=1)
+    wrong_idx = tf.stack([
+        tf.tile(tf.reshape(i, [batch_size, 1]), [1, _num_classes - 1]),
+        tf.gather(_js, label),
+    ], axis=2)
+    return correct_idx, wrong_idx
+
+# Adapted from https://github.com/deepmind/interval-bound-propagation
+# FIXME: copy licence
+def ibp_loss(y_true, y_pred, model, eps, k, _num_classes=10, elision=False):
+    y_true = K.argmax(y_true, axis=-1)
+    # Compute indices
+    _correct_idx, _wrong_idx = _build_indices(y_true)
+
+    lb, ub = K.maximum(model.input - eps, 0), K.minimum(model.input + eps, 1)
+    if elision:
+        # Exclude final layer
+        for layer in model._layers[1:-1]:
+            lb, ub = compute_ia_bounds(layer, lb, ub)
+        batch_size = tf.shape(lb)[0]
+        w = model._layers[-2].kernel
+        b = model._layers[-2].bias
+        w_t = tf.tile(tf.expand_dims(tf.transpose(w), 0), [batch_size, 1, 1])
+        b_t = tf.tile(tf.expand_dims(b, 0), [batch_size, 1])
+        w_correct = tf.expand_dims(tf.gather_nd(w_t, _correct_idx), -1)
+        b_correct = tf.expand_dims(tf.gather_nd(b_t, _correct_idx), 1)
+        w_wrong = tf.transpose(tf.gather_nd(w_t, _wrong_idx), [0, 2, 1])
+        b_wrong = tf.gather_nd(b_t, _wrong_idx)
+        w = w_wrong - w_correct
+        b = b_wrong - b_correct
+        # Maximize z * w + b s.t. lower <= z <= upper.
+        c = (lb + ub) / 2.
+        r = (ub - lb) / 2.
+        c = tf.einsum('ij,ijk->ik', c, w)
+        if b is not None:
+            c += b
+        r = tf.einsum('ij,ijk->ik', r, tf.abs(w))
+        bounds = c + r
+    else:
+        for layer in model._layers[1:]:
+            lb, ub = compute_ia_bounds(layer, lb, ub)
+
+        correct_class_logit = tf.gather_nd(lb, _correct_idx)
+        wrong_class_logits = tf.gather_nd(ub, _wrong_idx)
+        bounds = wrong_class_logits - tf.expand_dims(correct_class_logit, 1)
+
+    v = tf.concat(
+        [bounds, tf.zeros([tf.shape(bounds)[0], 1], dtype=bounds.dtype)],
+        axis=1)
+    l = tf.concat(
+        [tf.zeros_like(bounds),
+            tf.ones([tf.shape(bounds)[0], 1], dtype=bounds.dtype)],
+        axis=1)
+    _verified_loss = tf.reduce_mean(
+        tf.nn.softmax_cross_entropy_with_logits_v2(
+            labels=tf.stop_gradient(l), logits=v))
+
+    _cross_entropy = tf.reduce_mean(
+        tf.nn.sparse_softmax_cross_entropy_with_logits(
+            labels=y_true, logits=model.layers[-1].output))
+
+    v = tf.reduce_max(bounds, axis=1)
+    model.robust_accuracy = tf.reduce_mean(tf.cast(v <= 0., tf.float32))
+
+    return k * _cross_entropy + (1 - k) * _verified_loss
+
+def IBP_CNN(input_shape, layers):
+    inputs = Input(shape=input_shape)
     # Hacky way of forcing the learning phase tensor to actually be updated,
     # because we'll need it for selecting the right epsilon and k values based
     # on train/test time.
-    x._uses_learning_phase = True
-    lb, ub = K.maximum(x - eps, 0), K.minimum(x + eps, 1)
+    inputs._uses_learning_phase = True
 
+    x = inputs
     for layer in layers:
         x = layer(x)
-        lb, ub = compute_ia_bounds(layer, lb, ub)
 
-    outputs = Softmax()(x)
+    return Model(inputs=inputs, outputs=x)
 
-    return Model(inputs=inputs, outputs=outputs), lb, ub
-
-def SmallCNN(input_shape, eps, num_classes=10):
+def SmallCNN(input_shape, num_classes=10):
     layers = [
         Conv2D(16, (4, 4), strides=2, padding="VALID"),
         ReLU(),
@@ -39,9 +108,9 @@ def SmallCNN(input_shape, eps, num_classes=10):
         ReLU(),
         Dense(num_classes)
     ]
-    return IBP_CNN(input_shape=input_shape, layers=layers, eps=eps)
+    return IBP_CNN(input_shape=input_shape, layers=layers)
 
-def MediumCNN(input_shape, eps, num_classes=10):
+def MediumCNN(input_shape, num_classes=10):
     layers = [
         Conv2D(32, (3, 3), strides=1, padding="VALID"),
         ReLU(),
@@ -58,9 +127,9 @@ def MediumCNN(input_shape, eps, num_classes=10):
         ReLU(),
         Dense(num_classes)
     ]
-    return IBP_CNN(input_shape=input_shape, layers=layers, eps=eps)
+    return IBP_CNN(input_shape=input_shape, layers=layers)
 
-def LargeCNN(input_shape, eps, num_classes=10):
+def LargeCNN(input_shape, num_classes=10):
     layers = [
         Conv2D(64, (3, 3), strides=1, padding="VALID"),
         ReLU(),
@@ -77,7 +146,7 @@ def LargeCNN(input_shape, eps, num_classes=10):
         ReLU(),
         Dense(num_classes)
     ]
-    return IBP_CNN(input_shape=input_shape, layers=layers, eps=eps)
+    return IBP_CNN(input_shape=input_shape, layers=layers)
 
 def compute_ia_bounds(layer, lb, ub):
     if isinstance(layer, (Activation, AveragePooling2D, BatchNormalization, Flatten, MaxPooling2D, ReLU)):
