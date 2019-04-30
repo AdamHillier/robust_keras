@@ -9,13 +9,14 @@ from keras import activations
 from keras.engine.input_layer import Input, InputLayer
 from keras.datasets import cifar10, mnist
 
+from pgd_attack import AdversarialExampleGenerator
+from svm_model import SVMModel
+
 from tqdm import trange
 import scipy.io as sio
 
 from pathlib import Path
 import json
-
-from pgd_attack import AdversarialExampleGenerator
 
 def evaluate(model, x, y):
     print("Evaluating model")
@@ -147,14 +148,52 @@ def prune_relus(model, relu_prune_threshold, x_train, y_train, epsilon):
 
     return masked_model, layer_ops
 
-def process_model(model, dataset, weight_prune, relu_prune, do_eval, output_path,
-                  epsilon, weight_prune_threshold=1e-3, relu_prune_threshold=0.05,
-                  validation_size=5000):
+def add_svm_distances(model, x_train, y_train, num_classes=10):
+    print("Adding SVM distances to final output")
+
+    if isinstance(model.layers[-1], Softmax):
+        logit_layer = model.layers[-2]
+    else:
+        logit_layer = model.layers[-1]
+
+    # Generate image features
+    input_tensor = model.input
+    output_tensor = logit_layer.input
+    image_features_model = Model(inputs=input_tensor, outputs=output_tensor)
+    image_features = image_features_model.predict(x_train)
+
+    # Train SVM model
+    svm_model = SVMModel(image_features, y_train)
+
+    # Merge weights
+    [W_logits, b_logits] = logit_layer.get_weights()
+    W_svm, b_svm = svm_model.distances_linear_map(
+        image_feature_dim=image_features.shape[-1],
+        num_classes=num_classes
+    )
+    modified_W = np.concatenate((W_logits, W_svm), axis=1)
+    modified_b = np.concatenate((b_logits, b_svm))
+
+    modified_logit_layer = Dense(
+        num_classes + int(num_classes * (num_classes - 1) / 2),
+        name="combined_logits_and_svm_dists"
+    )
+    output = modified_logit_layer(logit_layer.input)
+    modified_logit_layer.set_weights([modified_W, modified_b])
+
+    # Even if there was originally a final Softmax, it's now irrelevant
+    return Model(input=model.input, output=output)
+
+def process_model(model, dataset, weight_prune, relu_prune, do_eval, add_svm_dists,
+                  output_path, epsilon, weight_prune_threshold=1e-3,
+                  relu_prune_threshold=0.05, validation_size=5000):
     if dataset == "CIFAR10":
         (x_train, y_train), _ = cifar10.load_data()
+        num_classes = 10
     elif dataset == "MNIST":
         (x_train, y_train), _ = mnist.load_data()
         x_train = np.expand_dims(x_train, axis=-1)
+        num_classes = 10
     else:
         raise ValueError("Unrecognised dataset")
 
@@ -175,10 +214,12 @@ def process_model(model, dataset, weight_prune, relu_prune, do_eval, output_path
         if do_eval:
             evaluate(model, x_valid, y_valid)
     if relu_prune:
-        relu_pruned_model, layer_ops = prune_relus(model, relu_prune_threshold,
+        model, layer_ops = prune_relus(model, relu_prune_threshold,
                                                    x_train, y_train, epsilon)
         if do_eval:
-            evaluate(relu_pruned_model, x_valid, y_valid)
+            evaluate(model, x_valid, y_valid)
+    if add_svm_dists:
+        model = add_svm_distances(model, x_train, y_train, num_classes=num_classes)
 
     # Save processed model
 
@@ -306,6 +347,7 @@ if __name__ == "__main__":
     add_bool_arg(parser, "relu_prune")
     parser.add_argument("--relu_prune_threshold", type=float, default=0.05)
     add_bool_arg(parser, "do_eval")
+    add_bool_arg(parser, "add_svm_distances", default=False)
     parser.add_argument("--output_folder", type=Path, default=Path("processed_models"))
     parser.add_argument("--set_gpu", type=int)
 
@@ -344,7 +386,7 @@ if __name__ == "__main__":
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     process_model(model, config.dataset, config.weight_prune, config.relu_prune,
-                  config.do_eval, output_path, config.epsilon,
+                  config.do_eval, config.add_svm_distances, output_path, config.epsilon,
                   weight_prune_threshold=config.weight_prune_threshold,
                   relu_prune_threshold=config.relu_prune_threshold,
                   validation_size=config.validation_size)

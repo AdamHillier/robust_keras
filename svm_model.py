@@ -77,7 +77,7 @@ class SVMModel():
 
         return num_correct / len(X_test)
 
-    def distances_linear_map(self):
+    def distances_linear_map(self, image_feature_dim, num_classes=10):
         start = 0
         end = 0
         class_support_vect = []
@@ -89,10 +89,10 @@ class SVMModel():
             class_dual_coef.append(self.svm.dual_coef_[:, start:end])
             start = end
 
-        dists = np.zeros((45,100))
+        dists = np.zeros((int(num_classes * (num_classes - 1) / 2), image_feature_dim))
         k = 0
-        for i in range(10):
-            for j in range(i+1, 10):
+        for i in range(num_classes):
+            for j in range(i+1, num_classes):
                 dists[k] += np.sum(class_dual_coef[i][j-1].reshape(1,-1).T * class_support_vect[i], axis=0)
                 dists[k] += np.sum(class_dual_coef[j][i].reshape(1,-1).T * class_support_vect[j], axis=0)
                 k += 1

@@ -4,7 +4,9 @@ using Memento
 using JSON
 using MAT
 
-path = "processed_models/MNIST_SmallCNN_eps_0.100/Apr24_16-19-34/weights_100_0.96"
+folder = "processed_models/"
+name = "IBP_MNIST_SmallCNN_train_0.200_eval_0.100_elide/Apr29_22-00-04/weights_100_0.971"
+path = folder * name
 
 config_array = JSON.parsefile(path * "__config.json")
 weights_dict = path * "__weights.mat" |> matread
@@ -40,10 +42,12 @@ for (i, layer) in enumerate(config_array)
         weight_shape = layer["weight_shape"]
         @assert size(weight_shape) == (4,)
         expected_shape = (weight_shape[1], weight_shape[2], weight_shape[3], weight_shape[4])
+        padding = layer["padding"] == "valid" ? MIPVerify.valid : MIPVerify.same
         push!(layers,
               get_conv_params(weights_dict, layer_id, expected_shape;
                               # Only equal stride (single int) is supported
-                              expected_stride = layer["stride"][1]))
+                              expected_stride = layer["stride"][1],
+                              padding = padding))
     elseif layer_type == "Flatten"
         push!(layers, Flatten(4))
     elseif layer_type == "FullyConnected"
@@ -76,10 +80,10 @@ end
 start_index = 1
 end_index = 5000
 dataset = "validation"
-eps = 2 / 255
-adv_pred_opt = MIPVerify.None()
+eps = 0.1
+adv_pred_opt = MIPVerify.FindMinDistanceThreshold()
 
-net = Graph(layers, inputs, path)
+net = Graph(layers, inputs, name)
 println(net)
 
 cifar10 = dataset == "validation" ?
@@ -90,7 +94,7 @@ mnist = dataset == "validation" ?
     read_datasets("MNIST", 55001, 5000).train :
     read_datasets("MNIST").test
 
-f = frac_correct(net, mnist, 250)
+f = frac_correct(net, mnist, 1000)
 println("Fraction correct: $(f)")
 
 target_indexes = start_index:end_index
@@ -103,13 +107,13 @@ MIPVerify.batch_find_untargeted_attack(
     target_indexes,
     10,
     adv_pred_opt,
-    GurobiSolver(Gurobi.Env(), BestObjStop=eps, TimeLimit=300),
-    save_path="./verification/results_$(dataset)/",
+    GurobiSolver(Gurobi.Env(), BestObjStop=eps, TimeLimit=600),
+    save_path="./verification_results/$(dataset)/",
     norm_order=Inf,
     tightening_algorithm=lp,
     rebuild=false,
     cache_model=false,
-    tightening_solver=GurobiSolver(Gurobi.Env(), TimeLimit=10, OutputFlag=0),
+    tightening_solver=GurobiSolver(Gurobi.Env(), TimeLimit=30, OutputFlag=0),
     pp = MIPVerify.LInfNormBoundedPerturbationFamily(eps),
     solve_rerun_option = MIPVerify.resolve_ambiguous_cases
 )
