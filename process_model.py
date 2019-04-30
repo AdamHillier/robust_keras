@@ -4,7 +4,7 @@ import keras.backend as K
 from keras.models import Model, load_model, clone_model
 from keras.optimizers import Adam
 from keras.layers import Activation, Add, AveragePooling2D, BatchNormalization,\
-                         Conv2D, Dense, Flatten, MaxPooling2D, Lambda, ReLU
+                         Conv2D, Dense, Flatten, MaxPooling2D, Lambda, ReLU, Softmax
 from keras import activations
 from keras.engine.input_layer import Input, InputLayer
 from keras.datasets import cifar10, mnist
@@ -193,7 +193,7 @@ def process_model(model, dataset, weight_prune, relu_prune, do_eval, output_path
         for n in layer._inbound_nodes:
             input_layers.extend(n.inbound_layers)
         input_indices = [model._layers.index(l) for l in input_layers]
-        
+
         if isinstance(layer, InputLayer):
             layer_config.append({"type": "Input"})
 
@@ -228,7 +228,8 @@ def process_model(model, dataset, weight_prune, relu_prune, do_eval, output_path
             layer_config.append({
                 "type": "Conv2D",
                 "weight_shape": weights.shape,
-                "stride": layer.strides
+                "stride": layer.strides,
+                "padding": layer.padding
             })
 
         elif isinstance(layer, Dense):
@@ -264,6 +265,9 @@ def process_model(model, dataset, weight_prune, relu_prune, do_eval, output_path
             else:
                 layer_type = "Relu"
             layer_config.append({"type": layer_type})
+
+        elif isinstance(layer, Softmax) and i == len(model._layers) - 1:
+            pass
 
         else:
             raise ValueError("Unsupported layer")
@@ -328,7 +332,9 @@ if __name__ == "__main__":
         "rs_loss": empty_func,
         "rs_loss_metric": empty_func,
         "num_unstable": empty_func,
-        "num_unstable_metric": empty_func
+        "num_unstable_metric": empty_func,
+        "loss": "sparse_categorical_crossentropy",
+        "robust_acc": empty_func
     }
     model = load_model(str(config.model_path), custom_objects)
 
