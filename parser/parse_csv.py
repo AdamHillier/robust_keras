@@ -8,7 +8,7 @@ def preprocess_summary_file(dt, labels, dist_threshold, get_last=True):
         elif s == "InfeasibleDistance" or (dist_threshold == None and
                 (s.startswith("InfeasibleDistance") or
                 s.startswith("InfeasibleUndecidedDistance"))):
-            return "ProvablyRobustByDistanceUnknownThreshold"
+            return s
         elif s.startswith("InfeasibleDistance") and dist_threshold != None:
             min_threshold = float(s[18:])
             if min_threshold > dist_threshold:
