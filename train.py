@@ -142,7 +142,7 @@ model.summary()
 
 # Prepare model model saving directory
 model_type = config.model_name
-model_name = "%s_%s_eps_%.3f" % (config.dataset, model_type, config.epsilon)
+model_name = "RS_%s_%s_eps_%.3f" % (config.dataset, model_type, config.epsilon)
 if not config.load_weights_from:
     save_dir = Path("saved_models") / model_name / datetime.now().strftime("%b%d_%H-%M-%S")
     if not save_dir.exists():
