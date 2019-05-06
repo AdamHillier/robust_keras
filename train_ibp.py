@@ -106,6 +106,14 @@ eps = K.in_train_phase(K.stop_gradient(eps_train_var), K.constant(config.eval_ep
 k_train_var = K.variable(1)
 k = K.in_train_phase(K.stop_gradient(k_train_var), K.constant(config.min_k))
 
+if config.augmentation:
+    mean, std = x_train.mean(axis=(0, 1, 2)), x_train.std(axis=(0, 1, 2)) + 1e-6
+    x_train = (x_train - mean) / std
+    x_valid = (x_valid - mean) / std
+    print("Normalising channels with values", mean, std)
+else:
+    mean, std = None, None
+
 if config.model_name == "SmallCNN":
     model = SmallCNN(input_shape=input_shape)
 elif config.model_name == "MediumCNN":
@@ -116,7 +124,7 @@ else:
     raise ValueError("Unrecognised model")
 
 def loss(y_true, y_pred):
-    return ibp_loss(y_true, y_pred, model, eps, k)
+    return ibp_loss(y_true, y_pred, model, eps, k, mean=mean, std=std, elision=config.elide_final_layer)
 
 def robust_acc(y_true, y_pred):
     return model.robust_accuracy
@@ -153,6 +161,7 @@ with open(str(save_dir / ("config_%d.json" % config.initial_epoch)), "w") as fp:
 # Set up training callbacks
 checkpoint = ModelCheckpoint(filepath=str(file_path),
                              monitor="val_robust_acc",
+                             period=10,
                              verbose=1)
 tensor_board = TensorBoard(log_dir=save_dir,
                            histogram_freq=0,
@@ -225,13 +234,14 @@ else:
     # This will do preprocessing and realtime data augmentation:
     datagen = ImageDataGenerator(
         # randomly rotate images in the range (deg 0 to 30)
-        rotation_range=30,
+        # rotation_range=30,
         # randomly shift images horizontally
-        width_shift_range=0.1,
+        width_shift_range=4,
         # randomly shift images vertically
-        height_shift_range=0.1,
+        height_shift_range=4,
         # set mode for filling points outside the input boundaries
-        fill_mode="nearest",
+        fill_mode="constant",
+        cval=0,
         # randomly flip images
         horizontal_flip=True)
 

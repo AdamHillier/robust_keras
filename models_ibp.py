@@ -27,19 +27,29 @@ def _build_indices(label, _num_classes=10):
 
 # Adapted from https://github.com/deepmind/interval-bound-propagation
 # FIXME: copy licence
-def ibp_loss(y_true, y_pred, model, eps, k, _num_classes=10, elision=False):
+def ibp_loss(y_true, y_pred, model, eps, k, _num_classes=10, elision=False, mean=None, std=None):
     y_true = K.argmax(y_true, axis=-1)
     # Compute indices
     _correct_idx, _wrong_idx = _build_indices(y_true)
 
-    lb, ub = K.maximum(model.input - eps, 0), K.minimum(model.input + eps, 1)
+    if mean is not None and std is not None:
+        min_value = (0 - mean) / std
+        max_value = (1 - mean) / std
+        print("Min image value", min_value)
+        print("Max image value", max_value)
+        scaled_eps = eps / K.constant(std)
+    else:
+        min_value, max_value = 0, 1
+        scaled_eps = eps
+
+    lb, ub = K.maximum(model.input - scaled_eps, min_value), K.minimum(model.input + scaled_eps, max_value)
     if elision:
         # Exclude final layer
         for layer in model._layers[1:-1]:
             lb, ub = compute_ia_bounds(layer, lb, ub)
         batch_size = tf.shape(lb)[0]
-        w = model._layers[-2].kernel
-        b = model._layers[-2].bias
+        w = model._layers[-1].kernel
+        b = model._layers[-1].bias
         w_t = tf.tile(tf.expand_dims(tf.transpose(w), 0), [batch_size, 1, 1])
         b_t = tf.tile(tf.expand_dims(b, 0), [batch_size, 1])
         w_correct = tf.expand_dims(tf.gather_nd(w_t, _correct_idx), -1)
@@ -51,10 +61,10 @@ def ibp_loss(y_true, y_pred, model, eps, k, _num_classes=10, elision=False):
         # Maximize z * w + b s.t. lower <= z <= upper.
         c = (lb + ub) / 2.
         r = (ub - lb) / 2.
-        c = tf.einsum('ij,ijk->ik', c, w)
+        c = tf.einsum("ij,ijk->ik", c, w)
         if b is not None:
             c += b
-        r = tf.einsum('ij,ijk->ik', r, tf.abs(w))
+        r = tf.einsum("ij,ijk->ik", r, tf.abs(w))
         bounds = c + r
     else:
         for layer in model._layers[1:]:
