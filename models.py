@@ -13,12 +13,12 @@ import math
 def SmallCNN(input_shape, l1_coef, num_classes=10):
     model = Sequential()
     width = math.ceil(max(input_shape[0:2]) / 2)
-    model.add(Conv2D(16, (4, 4), strides=2, padding="SAME",
+    model.add(Conv2D(16, (4, 4), strides=2, padding="VALID",
                      kernel_regularizer=l1(width * width * l1_coef),
                      input_shape=input_shape))
     width = math.ceil(width / 2)
     model.add(Activation("relu"))
-    model.add(Conv2D(32, (4, 4), strides=2, padding="SAME",
+    model.add(Conv2D(32, (4, 4), strides=1, padding="VALID",
                      kernel_regularizer=l1(width * width * l1_coef)))
     width = math.ceil(width / 2)
     model.add(Activation("relu"))
@@ -304,8 +304,6 @@ def relu_stability_improved(model, rs_coef, epsilon):
         # Only support standard 2D convolutions
         assert(len(input_shape) == 4 and len(output_shape) == 4)
         assert(len(strides) == 4 and strides[0] == strides[3] == 1)
-        assert(math.ceil(input_shape[1] / strides[1]) == output_shape[1] and
-               math.ceil(input_shape[2] / strides[2]) == output_shape[2])
         ident = tf.eye(input_shape[1] * input_shape[2] * input_shape[3])
         ident_reshaped = tf.reshape(ident, [-1, input_shape[1], input_shape[2], input_shape[3]])
         kernel_fc = tf.reshape(
