@@ -158,7 +158,7 @@ def add_svm_distances(model, x_train, y_train, num_classes=10):
 
     # Generate image features
     input_tensor = model.input
-    output_tensor = logit_layer.input
+    output_tensor = logit_layer.get_input_at(-1)
     image_features_model = Model(inputs=input_tensor, outputs=output_tensor)
     image_features = image_features_model.predict(x_train)
 
@@ -178,17 +178,18 @@ def add_svm_distances(model, x_train, y_train, num_classes=10):
         num_classes + int(num_classes * (num_classes - 1) / 2),
         name="combined_logits_and_svm_dists"
     )
-    output = modified_logit_layer(logit_layer.input)
+    output = modified_logit_layer(logit_layer.get_input_at(-1))
     modified_logit_layer.set_weights([modified_W, modified_b])
 
     # Even if there was originally a final Softmax, it's now irrelevant
     return Model(input=model.input, output=output)
 
-def process_model(model, dataset, weight_prune, relu_prune, do_eval, add_svm_dists,
-                  output_path, epsilon, weight_prune_threshold=1e-3,
+def process_model(model, dataset, normalise, weight_prune, relu_prune, do_eval,
+                  add_svm_dists, output_path, epsilon, weight_prune_threshold=1e-3,
                   relu_prune_threshold=0.05, validation_size=5000):
     if dataset == "CIFAR10":
         (x_train, y_train), _ = cifar10.load_data()
+        y_train = y_train.reshape(-1)
         num_classes = 10
     elif dataset == "MNIST":
         (x_train, y_train), _ = mnist.load_data()
@@ -207,6 +208,23 @@ def process_model(model, dataset, weight_prune, relu_prune, do_eval, add_svm_dis
     x_train = x_train.astype("float32") / 255
     x_valid = x_valid.astype("float32") / 255
 
+    if normalise:
+        mean = x_train.mean(axis=(0, 1, 2))
+        std = x_train.std(axis=(0, 1, 2)) + 1e-8
+        print("Normalising channels with values", mean, std)
+        input_shape = x_train.shape[1:]
+        normalise_input = Input(shape=input_shape, name="input_for_normalise")
+        normalise_layer = Lambda(lambda x: (x - K.constant(mean)) / K.constant(std))
+        normalise_layer.mean = mean
+        normalise_layer.std = std
+        output = normalise_layer(normalise_input)
+        for l in model._layers[1:]:
+            output = l(output)
+        model = Model(inputs=normalise_input, outputs=output)
+        model.compile(loss="sparse_categorical_crossentropy",
+                      optimizer=Adam(lr=1e-4),
+                      metrics=["accuracy"])
+
     if do_eval:
         evaluate(model, x_valid, y_valid)
     if weight_prune:
@@ -214,10 +232,10 @@ def process_model(model, dataset, weight_prune, relu_prune, do_eval, add_svm_dis
         if do_eval:
             evaluate(model, x_valid, y_valid)
     if relu_prune:
-        model, layer_ops = prune_relus(model, relu_prune_threshold,
+        relu_pruned_model, layer_ops = prune_relus(model, relu_prune_threshold,
                                                    x_train, y_train, epsilon)
         if do_eval:
-            evaluate(model, x_valid, y_valid)
+            evaluate(relu_pruned_model, x_valid, y_valid)
     if add_svm_dists:
         model = add_svm_distances(model, x_train, y_train, num_classes=num_classes)
 
@@ -233,7 +251,8 @@ def process_model(model, dataset, weight_prune, relu_prune, do_eval, add_svm_dis
         input_layers = []
         for n in layer._inbound_nodes:
             input_layers.extend(n.inbound_layers)
-        input_indices = [model._layers.index(l) for l in input_layers]
+        # input_indices = [model._layers.index(l) for l in input_layers]
+        input_indices = [model._layers.index(input_layers[-1])] if len(input_layers) > 0 else []
 
         if isinstance(layer, InputLayer):
             layer_config.append({"type": "Input"})
@@ -295,6 +314,16 @@ def process_model(model, dataset, weight_prune, relu_prune, do_eval, add_svm_dis
                 "pool_size": layer.pool_size
             })
 
+        elif isinstance(layer, Lambda) and layer.mean is not None and layer.std is not None:
+            assert(len(input_indices) == 1)
+            layer_id = "Normalization_{}".format(i)
+            mean, std = layer.mean, layer.std
+            weights_to_save[layer_id + "/mean"] = mean
+            weights_to_save[layer_id + "/std"] = std
+            weights_to_save[layer_id + "/gamma"] = np.ones_like(mean)
+            weights_to_save[layer_id + "/beta"] = np.zeros_like(mean)
+            layer_config.append({"type": "Normalization"})
+
         elif layer in relu_layers:
             assert(len(input_indices) == 1)
             if relu_prune:
@@ -342,6 +371,7 @@ if __name__ == "__main__":
     parser.add_argument("dataset", choices=["CIFAR10", "MNIST"])
     parser.add_argument("epsilon", type=float)
     parser.add_argument("--validation_size", type=int, default=5000)
+    add_bool_arg(parser, "normalise", default=False)
     add_bool_arg(parser, "weight_prune")
     parser.add_argument("--weight_prune_threshold", type=float, default=1e-3)
     add_bool_arg(parser, "relu_prune")
@@ -385,8 +415,9 @@ if __name__ == "__main__":
     output_path = config.output_folder / Path(*config.model_path.parts[1:-1]) / input_name
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    process_model(model, config.dataset, config.weight_prune, config.relu_prune,
-                  config.do_eval, config.add_svm_distances, output_path, config.epsilon,
+    process_model(model, config.dataset, config.normalise, config.weight_prune,
+                  config.relu_prune, config.do_eval, config.add_svm_distances,
+                  output_path, config.epsilon,
                   weight_prune_threshold=config.weight_prune_threshold,
                   relu_prune_threshold=config.relu_prune_threshold,
                   validation_size=config.validation_size)
