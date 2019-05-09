@@ -11,8 +11,9 @@ from keras.datasets import cifar10, mnist
 import tensorflow as tf
 from keras.backend.tensorflow_backend import set_session
 
-from models_ibp import SmallCNN, MediumCNN, LargeCNN, ScheduleHyperParamCallback, \
-                       ConstantSchedule, InterpolateSchedule, ibp_loss
+from models_ibp import SmallCNN, MediumCNN, LargeCNN, LargeCNN_2, \
+                       ScheduleHyperParamCallback, ConstantSchedule, \
+                       InterpolateSchedule, ibp_loss
 
 import math
 import argparse
@@ -32,7 +33,7 @@ def add_bool_arg(parser, name, default=True):
     group.add_argument("--no_" + name, dest=name, action="store_false")
     parser.set_defaults(**{name:default})
 
-parser.add_argument("model_name", choices=["SmallCNN", "MediumCNN", "LargeCNN"])
+parser.add_argument("model_name", choices=["SmallCNN", "MediumCNN", "LargeCNN", "LargeCNN_2"])
 parser.add_argument("dataset", choices=["MNIST", "CIFAR10"])
 parser.add_argument("eval_epsilon", type=float)
 parser.add_argument("train_epsilon", type=float)
@@ -120,6 +121,8 @@ elif config.model_name == "MediumCNN":
     model = MediumCNN(input_shape=input_shape)
 elif config.model_name == "LargeCNN":
     model = LargeCNN(input_shape=input_shape)
+elif config.model_name == "LargeCNN_2":
+    model = LargeCNN_2(input_shape=input_shape)
 else:
     raise ValueError("Unrecognised model")
 

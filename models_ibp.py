@@ -158,6 +158,23 @@ def LargeCNN(input_shape, num_classes=10):
     ]
     return IBP_CNN(input_shape=input_shape, layers=layers)
 
+def LargeCNN_2(input_shape, num_classes=10):
+    layers = [
+        Conv2D(64, (3, 3), strides=1, padding="VALID"),
+        ReLU(),
+        Conv2D(64, (3, 3), strides=1, padding="VALID"),
+        ReLU(),
+        Conv2D(128, (3, 3), strides=2, padding="VALID"),
+        ReLU(),
+        Conv2D(128, (3, 3), strides=1, padding="VALID"),
+        ReLU(),
+        Flatten(),
+        Dense(512),
+        ReLU(),
+        Dense(num_classes)
+    ]
+    return IBP_CNN(input_shape=input_shape, layers=layers)
+
 def compute_ia_bounds(layer, lb, ub):
     if isinstance(layer, (Activation, AveragePooling2D, BatchNormalization, Flatten, MaxPooling2D, ReLU)):
         # Assuming monotonic, FIXME might not be for general Activation?
