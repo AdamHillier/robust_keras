@@ -6,7 +6,7 @@ from keras.preprocessing.image import ImageDataGenerator
 from keras.utils import to_categorical
 from keras.callbacks import EarlyStopping, LearningRateScheduler, ModelCheckpoint, \
                             ReduceLROnPlateau, TensorBoard
-from keras.datasets import cifar10, mnist
+from keras.datasets import cifar10, mnist, fashion_mnist
 
 import tensorflow as tf
 from keras.backend.tensorflow_backend import set_session
@@ -34,7 +34,7 @@ def add_bool_arg(parser, name, default=True):
     parser.set_defaults(**{name:default})
 
 parser.add_argument("model_name", choices=["SmallCNN", "MediumCNN", "LargeCNN", "LargeCNN_2"])
-parser.add_argument("dataset", choices=["MNIST", "CIFAR10"])
+parser.add_argument("dataset", choices=["MNIST", "CIFAR10", "FASHION_MNIST"])
 parser.add_argument("eval_epsilon", type=float)
 parser.add_argument("train_epsilon", type=float)
 
@@ -76,6 +76,9 @@ if config.dataset == "CIFAR10":
     (x_train, y_train), _ = cifar10.load_data()
 elif config.dataset == "MNIST":
     (x_train, y_train), _ = mnist.load_data()
+    x_train = np.expand_dims(x_train, axis=-1)
+elif config.dataset == "FASHION_MNIST":
+    (x_train, y_train), _ = fashion_mnist.load_data()
     x_train = np.expand_dims(x_train, axis=-1)
 else:
     raise ValueError("Unrecognised dataset")
@@ -234,16 +237,17 @@ if not config.augmentation:
               callbacks=callbacks)
 else:
     print('Using real-time data augmentation.')
+    shift = 4 if config.dataset == "CIFAR10" else 2
     # This will do preprocessing and realtime data augmentation:
     datagen = ImageDataGenerator(
         # randomly rotate images in the range (deg 0 to 30)
         # rotation_range=30,
         # randomly shift images horizontally
-        width_shift_range=4,
+        width_shift_range=shift,
         # randomly shift images vertically
-        height_shift_range=4,
+        height_shift_range=shift,
         # set mode for filling points outside the input boundaries
-        fill_mode="constant",
+        fill_mode="constant" if config.dataset == "CIFAR10" else "nearest",
         cval=0,
         # randomly flip images
         horizontal_flip=True)

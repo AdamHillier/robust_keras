@@ -7,7 +7,7 @@ from keras.layers import Activation, Add, AveragePooling2D, BatchNormalization,\
                          Conv2D, Dense, Flatten, MaxPooling2D, Lambda, ReLU, Softmax
 from keras import activations
 from keras.engine.input_layer import Input, InputLayer
-from keras.datasets import cifar10, mnist
+from keras.datasets import cifar10, mnist, fashion_mnist
 
 from pgd_attack import AdversarialExampleGenerator
 from svm_model import SVMModel
@@ -195,6 +195,10 @@ def process_model(model, dataset, normalise, weight_prune, relu_prune, do_eval,
         (x_train, y_train), _ = mnist.load_data()
         x_train = np.expand_dims(x_train, axis=-1)
         num_classes = 10
+    elif dataset == "FASHION_MNIST":
+        (x_train, y_train), _ = fashion_mnist.load_data()
+        x_train = np.expand_dims(x_train, axis=-1)
+        num_classes = 10
     else:
         raise ValueError("Unrecognised dataset")
 
@@ -368,7 +372,7 @@ if __name__ == "__main__":
         parser.set_defaults(**{name:default})
 
     parser.add_argument("model_path", type=Path)
-    parser.add_argument("dataset", choices=["CIFAR10", "MNIST"])
+    parser.add_argument("dataset", choices=["CIFAR10", "MNIST", "FASHION_MNIST"])
     parser.add_argument("epsilon", type=float)
     parser.add_argument("--validation_size", type=int, default=5000)
     add_bool_arg(parser, "normalise", default=False)
