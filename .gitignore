@@ -1,5 +1,6 @@
 saved_models
 processed_models
+verification_results
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
