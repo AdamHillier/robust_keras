@@ -129,7 +129,7 @@ class LinfPGDAttack:
 
             x += self.a * np.sign(grad[0])
 
-            np.clip(x, x_nat - epsilon, x_nat + epsilon, out=x) 
+            np.clip(x, x_nat - epsilon, x_nat + epsilon, out=x)
             np.clip(x, 0, 1, out=x)
 
         return x
